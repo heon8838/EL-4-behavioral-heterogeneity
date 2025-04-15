@@ -83,3 +83,154 @@ def angle_for_directionality(v1, v2):
 all_merged_means = pd.DataFrame()
 all_df_filtered = pd.DataFrame()
 
+final_means_path = input("Enter path to the final means CSV: ")
+filtered_spots_path = input("Enter path to the filtered spots CSV: ")
+
+#### STEP1: Upload the spots data (.csv)
+
+for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6. 
+    file_prefix = f"aItgb3_0V_{i}"
+
+    # Construct the file paths using the prefix
+    csv_file_path = f'data/{file_prefix}.csv'
+
+    file = csv_file_path
+    df = pd.read_csv(file, encoding='latin1', skiprows=[0,2,3])
+    df = df[['Track ID', 'Frame', 'X', 'Y', 'Z']]
+    df.columns = ['cell', 'frame', 'x', 'y', 'z']
+
+    # Sort the DataFrame by 'frame' and then by 'cell' in ascending order.
+    df = df.sort_values(['frame', 'cell'])
+
+    # get rid of any NaN
+    df = df[~df.isin([np.nan, np.inf, -np.inf]).any(axis=1)]
+
+    #### STEP2 : Visualize Track
+
+    dim_z = 300 # 300 um
+    ip = 200.0/303.0 # interpixel dimension (200 um / 303 pixels); approx for 20x magnification
+
+    # Absolute trajectories before drift correction
+    f = plt.figure(figsize=(6,6))
+
+    gs = gridspec.GridSpec(2, 2,height_ratios=[1,(1224.0*ip)/dim_z], width_ratios=[(1224.0*ip)/dim_z,1])
+
+    ax1 = plt.subplot(gs[0])
+    ax2 = plt.subplot(gs[2])
+    ax3 = plt.subplot(gs[3])
+
+    for c, d_  in df.groupby('cell'):
+
+        # ignore tracks where cell has less than 6 time points
+        if len(d_) <= 5:
+            continue
+
+        ax1.plot(d_.x - 1224.0*ip, 
+                    d_.z)
+        #ax1.set_ylim(0,300)
+        #ax1.set_xlim(-676,0)
+        ax2.plot(d_.x - 1224.0*ip, 
+                    1224.0*ip - d_.y)
+        ax2.set_xlabel('x position ($\mu$m)')
+        ax2.set_ylabel('y position ($\mu$m)')
+        #ax2.set_xlim(-676,0)
+        #ax2.set_ylim(0,676)
+        ax2.annotate(c, xy=((d_.x.values - 1224.0*ip)[-1] + 20, 
+                                (1224.0*ip - d_.y.values)[-1]), 
+                        xytext=((d_.x.values - 1224.0*ip)[-1], 
+                                (1224.0*ip - d_.y.values)[-1]))
+
+        ax3.plot(d_.z, 
+                1224.0*ip - d_.y)
+
+        ax1.xaxis.set_visible(False)
+        ax1.set_ylabel('z ($\mu$m)')
+        ax3.yaxis.set_visible(False)
+        ax3.set_xlabel('z ($\mu$m)')
+        #ax3.set_xlim(0,300)
+        #ax3.set_ylim(0,676)
+        
+    plt.tight_layout()
+    plt.show()
+
+    #### STEP3 : Visualize and specify short tracks. First plot: short trajectories ; Second plot: First plot with cell annotation.
+    
+    f, ax = plt.subplots(1, 2, figsize=(12,6))
+
+    for i, data_ in df.groupby('cell'):
+        if len(data_.frame.unique()) <= 31:  # Maximum frame of time
+
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            d_y = data_.y[~np.isnan(data_.y)] 
+            d_z = data_.z[~np.isnan(data_.z)] 
+
+            if len(d_x)==0:
+                continue #ignore this cell
+
+            x = data_.x.values 
+            y = data_.y.values 
+            z = data_.z.values
+
+            # Visualize track of cells which move less than or equal to 5 um in y-direction
+            if np.ptp(y) <= 5:
+                        for ax_ in ax:
+                            ax_.plot(data_.x.values - 1224.0*ip, 
+                                        1224.0*ip - data_.y.values, linewidth = 1)
+                            ax_.set_xlabel('x position ($\mu$m)')
+                            ax_.set_ylabel('y position ($\mu$m)')
+        
+                        ax[1].annotate(i, xy=((data_.x.values - 1224.0*ip)[-1] + 20, 
+                                                    (1224.0*ip - data_.y.values)[-1]), 
+                                            xytext=((data_.x.values - 1224.0*ip)[-1], 
+                                                    (1224.0*ip - data_.y.values)[-1]))
+    plt.tight_layout()
+    plt.show()
+
+    #### STEP 4: Identify non-motile cells using one or both options, and perform drift correction.
+    
+    # Generate empty DataFrames to hold filtered cell data
+    df_filtered = pd.DataFrame()
+    df_ignore_nonmotile = pd.DataFrame()
+    df_ignore_other = pd.DataFrame()
+
+    nonmotile_cells = []
+    # Option 1 : You can mannually specify the non-motile cells from previous plot (STEP 3)
+    for x in [71, 201]:
+        nonmotile_cells = np.append(nonmotile_cells, x)
+
+    # Option 2 : Take all cells that show movement less than some value that should be adjusted depending on the degree of drift. note "CHANGE HERE"
+    for g, d_  in df.groupby('cell'):
+        tot_len = len(d_.frame.unique())
+        for i in d_.cell.unique():
+            data_ = d_[d_.cell==i]
+
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            d_y = data_.y[~np.isnan(data_.y)] 
+            d_z = data_.z[~np.isnan(data_.z)] 
+
+            if len(d_x) == tot_len:
+                if np.any([np.ptp(d_x)<=10.0, np.ptp(d_y)<=10.0]): ### CHANGE HERE ### Take all cell which move less than and equal to 10 um in either x or y-direction. ###
+                    nonmotile_cells = np.append(nonmotile_cells, i)
+
+        s_x = [0]
+        s_y = [0]
+        s_z = [0]
+
+        df_nonmotile = d_[d_.cell.isin(nonmotile_cells)]
+
+        for t in np.arange(0,tot_len):
+            if t == 0:
+                continue
+            shift_temp_x = []
+            shift_temp_y = []
+            shift_temp_z = []
+            for cell, d_nm in df_nonmotile.groupby('cell'):
+                shift_temp_x = np.append(shift_temp_x, d_nm[d_nm.frame==t].x.values - d_nm[d_nm.frame==t-1].x.values)
+                shift_temp_y = np.append(shift_temp_y, d_nm[d_nm.frame==t].y.values - d_nm[d_nm.frame==t-1].y.values)
+                shift_temp_z = np.append(shift_temp_z, d_nm[d_nm.frame==t].z.values - d_nm[d_nm.frame==t-1].z.values)
+            
+            s_x = np.append(s_x, np.mean(shift_temp_x))
+            s_y = np.append(s_y, np.mean(shift_temp_y))
+            s_z = np.append(s_z, np.mean(shift_temp_z))
