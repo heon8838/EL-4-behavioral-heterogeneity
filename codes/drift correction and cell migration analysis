@@ -53,7 +53,7 @@ def unit_vector(vector):
     """ Returns the unit vector of the vector.  """
     return vector / np.linalg.norm(vector)
 
-def angle_for_persistance(v1, v2):
+def angle_for_persistence(v1, v2):
     """ For calculating cell trajectory persistence, this definition returns the only "acute angle" in radians between vectors 'v1' and 'v2'::"""
     v1_u = unit_vector(v1)
     v2_u = unit_vector(v2)
@@ -81,7 +81,7 @@ def angle_for_directionality(v1, v2):
     return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
 all_merged_means = pd.DataFrame()
-all_df_filtered = pd.DataFrame()
+all_df_corrected_filtered = pd.DataFrame()
 
 final_means_path = input("Enter path to the final means CSV: ")
 filtered_spots_path = input("Enter path to the filtered spots CSV: ")
@@ -187,12 +187,12 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
     plt.tight_layout()
     plt.show()
 
-    #### STEP 4: Identify non-motile cells using one or both options, and perform drift correction.
+    #### STEP 4: Identify non-motile cells using one or both options, and measure the degree of drift.
     
     # Generate empty DataFrames to hold filtered cell data
-    df_filtered = pd.DataFrame()
-    df_ignore_nonmotile = pd.DataFrame()
-    df_ignore_other = pd.DataFrame()
+    df_corrected_filtered = pd.DataFrame()
+    df_corrected_nonmotile = pd.DataFrame()
+    df_corrected_ambiguous = pd.DataFrame()
 
     nonmotile_cells = []
     # Option 1 : You can mannually specify the non-motile cells from previous plot (STEP 3)
@@ -218,6 +218,8 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
         s_y = [0]
         s_z = [0]
 
+        # Measure the mean value of non-motile cells' drifted vector length 
+
         df_nonmotile = d_[d_.cell.isin(nonmotile_cells)]
 
         for t in np.arange(0,tot_len):
@@ -234,3 +236,244 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
             s_x = np.append(s_x, np.mean(shift_temp_x))
             s_y = np.append(s_y, np.mean(shift_temp_y))
             s_z = np.append(s_z, np.mean(shift_temp_z))
+
+        #### STEP 5: Apply drift correction
+        for i in d_.cell.unique():
+            data_ = d_[d_.cell==i]
+            print(data_)
+            # ignore cells having discontinuous time frame
+            if len(data_.frame.unique()) != len(np.arange(data_.frame.min(), data_.frame.max()+1)):
+                continue
+                
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            d_y = data_.y[~np.isnan(data_.y)] 
+            d_z = data_.z[~np.isnan(data_.z)] 
+
+            # ignore cells havning no spots
+            if len(d_x)==0:
+                continue
+
+            if len(d_x) >=0:
+                if len(df_nonmotile) == 0:  # In case that there is no non-motile cell.
+                    data_['x_shifted'] = data_['x']
+                    data_['y_shifted'] = data_['y']
+                    data_['z_shifted'] = data_['z']
+                    d_s_x = data_.x_shifted
+                    d_s_y = data_.y_shifted
+                    d_s_z = data_.z_shifted
+                else:
+                    x = data_.x.values
+                    y = data_.y.values
+                    z = data_.z.values
+                    
+                    cumsum_len = len(np.arange(data_.frame.min(), data_.frame.max() + 1))
+                    s_x_cumsum = np.cumsum(s_x[:cumsum_len])
+                    s_y_cumsum = np.cumsum(s_y[:cumsum_len])
+                    s_z_cumsum = np.cumsum(s_z[:cumsum_len])
+
+                    if len(s_x_cumsum) < len(x):
+                        x = x[:len(s_x_cumsum)]
+                    if len(s_y_cumsum) < len(y):
+                        y = y[:len(s_y_cumsum)]
+                    if len(s_z_cumsum) < len(z):
+                        z = z[:len(s_z_cumsum)]
+
+                    data_['x_shifted'] = x - s_x_cumsum
+                    data_['y_shifted'] = y - s_y_cumsum
+                    data_['z_shifted'] = z - s_z_cumsum
+                    
+                    d_s_x = data_.x_shifted
+                    d_s_y = data_.y_shifted
+                    d_s_z = data_.z_shifted
+
+                # Save to new dataframe
+                if i in nonmotile_cells:
+                    df_corrected_nonmotile = pd.concat([df_corrected_nonmotile, data_], 
+                                                ignore_index = True)
+                    
+                elif np.sqrt(np.ptp(d_s_x)**2 + np.ptp(d_s_y)**2 + np.ptp(d_s_z)**2) >=20:
+                
+                    df_corrected_filtered = pd.concat([df_corrected_filtered, data_], 
+                                            ignore_index = True)
+                    
+                else:
+                    df_corrected_ambiguous = pd.concat([df_corrected_ambiguous, data_], 
+                                            ignore_index = True)
+
+    #### STEP 6: Plot tracks to see what was filtered out and whether drift correction worked
+    f, ax = plt.subplots(1, 3, figsize=(9, 3))   
+
+    # Add distinct prefix
+    df_corrected_filtered['cell'] = file_prefix + "_" + df_corrected_filtered['cell'].astype(str)
+    df_corrected_nonmotile['cell'] = file_prefix + "_" + df_corrected_nonmotile['cell'].astype(str)
+    df_corrected_ambiguous['cell'] = file_prefix + "_" + df_corrected_ambiguous['cell'].astype(str)
+
+    # (1) filtered cells
+    for g, d_ in df_corrected_filtered.groupby('cell'):
+        for i in d_.cell.unique():
+            data_ = d_[d_.cell == i]
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            if len(d_x) == 0:
+                continue
+            ax[0].plot(data_.x_shifted.values - 1224.0*ip, 
+                    1224.0*ip - data_.y_shifted.values)
+    ax[0].set_xlabel('x position ($\mu$m)')
+    ax[0].set_ylabel('y position ($\mu$m)')
+    ax[0].set_title('Accepted cell tracks')
+
+    # (2) non-motile cells with cell annotation
+    for g, d_ in df_corrected_nonmotile.groupby('cell'):
+        for i in d_.cell.unique():
+            data_ = d_[d_.cell == i]
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            if len(d_x) == 0:
+                continue
+            x_shifted = data_.x_shifted.values - 1224.0 * ip
+            y_shifted = 1224.0 * ip - data_.y_shifted.values
+
+            ax[1].plot(x_shifted, y_shifted)
+
+            # show cell ID annotation
+            ax[1].annotate(i, 
+                        xy=(x_shifted[-1], y_shifted[-1]), 
+                        xytext=(x_shifted[-1] + 5, y_shifted[-1] + 5), 
+                        fontsize=5,
+                        arrowprops=dict(arrowstyle='->', lw=0.5))
+    ax[1].set_xlabel('x position ($\mu$m)')
+    ax[1].set_ylabel('y position ($\mu$m)')
+    ax[1].set_title('Non-motile cell tracks')
+
+    # (3) ambiguous
+    for g, d_ in df_corrected_ambiguous.groupby('cell'):
+        for i in d_.cell.unique():
+            data_ = d_[d_.cell == i]
+            data_ = data_.replace([np.inf, -np.inf], np.nan)
+            d_x = data_.x[~np.isnan(data_.x)] 
+            if len(d_x) == 0:
+                continue
+            x_shifted = data_.x_shifted.values - 1224.0 * ip
+            y_shifted = 1224.0 * ip - data_.y_shifted.values
+
+            ax[2].plot(x_shifted, y_shifted)
+
+            # ✨ Annotate 마지막 위치에 cell ID 표시
+            ax[2].annotate(i, 
+                        xy=(x_shifted[-1], y_shifted[-1]), 
+                        xytext=(x_shifted[-1] + 5, y_shifted[-1] + 5), 
+                        fontsize=5,
+                        arrowprops=dict(arrowstyle='->', lw=0.5))
+    ax[2].set_xlabel('x position ($\mu$m)')
+    ax[2].set_ylabel('y position ($\mu$m)')
+    ax[2].set_title('Ambiguous cell tracks')
+
+    plt.tight_layout()
+    plt.show()
+
+    # STEP 7: Calculate the mean of persistence, speed, total distance traveled, speed from total distance traveled, directionality.
+
+    df_persistence = pd.DataFrame()
+    df_speed = pd.DataFrame()
+    df_distance=pd.DataFrame()
+    df_drec = pd.DataFrame()
+
+    dx = []
+    dy = []
+    dz = []
+
+    for cell, d_ in df_corrected_filtered.groupby(['cell']):
+        ##### PERSISTENCE #####
+        if len(d_.frame.unique())>=0:                                   
+            for t in np.arange(d_.frame.min(),d_.frame.max(), 6)[1:-1]: ### Calculate the acute angle and directional persistence between two vectors separated by a 6-frame interval ###
+                dx1 = d_[d_.frame== t].x.values[0] - d_[d_.frame== t-6].x.values[0]
+                dy1 = d_[d_.frame== t].y.values[0] - d_[d_.frame== t-6].y.values[0]
+                dz1 = d_[d_.frame== t].z.values[0] - d_[d_.frame== t-6].z.values[0]
+                dx2 = d_[d_.frame== t+6].x.values[0] - d_[d_.frame== t].x.values[0]
+                dy2 = d_[d_.frame== t+6].y.values[0] - d_[d_.frame== t].y.values[0]
+                dz2 = d_[d_.frame== t+6].z.values[0] - d_[d_.frame== t].z.values[0]
+
+                angle = angle_for_persistence([dx2, dy2,dz2], [dx1, dy1,dz1])
+                cos_angle = np.cos(angle)
+                
+                datalist = {'cell': cell[0],
+                            'frame': t,
+                            'angle':angle,
+                            'cos_angle': cos_angle}
+                df_dict = pd.DataFrame([datalist])
+                df_persistence = pd.concat([df_persistence, df_dict], ignore_index=True)
+
+        ##### SPEED #####
+        speed_prep=[]
+        if len(d_.frame.unique()) >=0:                               
+            tot = 0
+            for t in np.arange(d_.frame.min(),d_.frame.max(), 1)[1:]:
+                vec_t1 = [d_[d_.frame == t].x.values[0] - d_[d_.frame == t-1].x.values[0],
+                            d_[d_.frame == t].y.values[0] - d_[d_.frame == t-1].y.values[0],
+                            d_[d_.frame == t].z.values[0] - d_[d_.frame == t-1].z.values[0]]
+                tot += np.sqrt(vec_t1[0]**2 + vec_t1[1]**2)
+            speed_prep = np.append(speed_prep,tot/len(np.arange(d_.frame.min(),d_.frame.max(), 1)[1:])/60)
+            datalist_2 = {'cell': cell[0],
+                        'frame':t,
+                        'speed':speed_prep[0],}
+            df_dict_2 = pd.DataFrame([datalist_2])
+            df_speed=pd.concat([df_speed,df_dict_2], ignore_index=True)
+
+        ##### TOTAL DISTANCE TRAVELED #####
+        if len(d_.frame.unique()) > 0:  # Check whether the cell has at least one frame.
+            total_distance = 0
+            for t in np.arange(d_.frame.min(), d_.frame.max() + 1, 1)[1:]:
+                vec_t1 = [d_[d_.frame == t].x.values[0] - d_[d_.frame == t-1].x.values[0],
+                        d_[d_.frame == t].y.values[0] - d_[d_.frame == t-1].y.values[0],
+                        d_[d_.frame == t].z.values[0] - d_[d_.frame == t-1].z.values[0]]
+                total_distance += np.sqrt(vec_t1[0]**2 + vec_t1[1]**2 + vec_t1[2]**2)  # 벡터의 크기를 합산하여 총 이동 거리 계산
+
+            # 이동한 총 거리를 초당 속도로 나누어 평균 속도 계산
+            average_speed = total_distance / (len(np.arange(d_.frame.min(), d_.frame.max() + 1, 1)[1:]) * 60)
+            
+            # 결과를 데이터프레임에 추가
+            datalist_3 = {
+                'cell': cell[0],
+                'total_distance': total_distance,  # 각 셀이 이동한 총 거리
+                'average_speed_from_distance': average_speed,  # 초당 평균 속도
+            }
+            df_dict_3 = pd.DataFrame([datalist_3])
+            df_distance=pd.concat([df_distance,df_dict_3], ignore_index=True)
+
+        if len(d_.frame.unique())>=0:                                    ############# Directionality ##########
+            for t in np.arange(d_.frame.min(),d_.frame.max(), 6)[1:-1]: 
+                dx_drec = d_[d_.frame== t].x.values[0] - d_[d_.frame== t-6].x.values[0]
+                dy_drec = d_[d_.frame== t].y.values[0] - d_[d_.frame== t-6].y.values[0]
+
+                angle_drec = angle_for_directionality([dx_drec,dy_drec], [1,0])
+                cos_angle_drec = np.cos(angle_drec)
+
+                datalist_4 = {'cell': cell[0],
+                            'frame': t,
+                            'angle_drec': angle_drec,
+                            'cos_drec_drec': cos_angle_drec}
+                df_dict_4 = pd.DataFrame([datalist_4])
+                df_drec = pd.concat([df_drec, df_dict_4], ignore_index = True)
+
+
+    # 'cell'별로 'cos_angle'의 평균 계산
+    cos_persistence_means = df_persistence.groupby('cell')['cos_angle'].mean().reset_index()
+    speed_means = df_speed.groupby('cell')['speed'].mean().reset_index()
+    cos_directionality_means = df_drec.groupby('cell')['cos_drec_drec'].mean().reset_index()
+
+    cos_persistence_means.columns = ['cell', 'cos_persistence_mean']  # 열 이름 변경
+    speed_means.columns=['cell','speed_mean']
+    cos_directionality_means.columns = ['cell', 'cos_directionality_mean']
+
+    merged_means = pd.merge(cos_persistence_means, speed_means, on='cell')
+    merged_means = pd.merge(merged_means, df_distance, on='cell')
+    merged_means = pd.merge(merged_means, cos_directionality_means, on='cell')
+
+     # Combine the processed data into the cumulative DataFrames
+    all_merged_means = pd.concat([all_merged_means, merged_means], ignore_index=True)
+    all_df_corrected_filtered = pd.concat([all_df_corrected_filtered, df_corrected_filtered], ignore_index=True)
+
+# Save the combined data to new CSV files
+all_merged_means.to_csv(final_means_path, index=False)
+all_df_corrected_filtered.to_csv(filtered_spots_path, index=False)
