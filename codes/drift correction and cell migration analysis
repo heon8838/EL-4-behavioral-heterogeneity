@@ -456,7 +456,7 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
     merged_means = pd.merge(merged_means, df_distance, on='cell')
     merged_means = pd.merge(merged_means, cos_directionality_means, on='cell')
 
-     # Combine the processed data into the cumulative DataFrames
+    # Combine the processed data into the cumulative DataFrames
     all_merged_means = pd.concat([all_merged_means, merged_means], ignore_index=True)
     all_df_corrected_filtered = pd.concat([all_df_corrected_filtered, df_corrected_filtered], ignore_index=True)
 
