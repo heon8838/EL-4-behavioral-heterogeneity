@@ -34,21 +34,6 @@ import bebi103
 
 import seaborn as sns
 
-#################### 안쓰였나?? ################################
-def legend_without_duplicate_labels(ax):
-    handles, labels = ax.get_legend_handles_labels()
-    unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
-    ax.legend(*zip(*unique), bbox_to_anchor=(1.05, 1.0), loc='upper left')
-
-# Number of replicatess
-n_reps = 2000
-rg = np.random.default_rng(3252)
-
-def draw_bs_rep(data, func, rg):
-    """Compute a bootstrap replicate from data."""
-    bs_sample = rg.choice(data, size=len(data))
-    return func(bs_sample)
-#################### 안쓰였나?? ################################
 def unit_vector(vector):
     """ Returns the unit vector of the vector.  """
     return vector / np.linalg.norm(vector)
