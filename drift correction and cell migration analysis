@@ -1,0 +1,41 @@
+import glob
+import os
+
+import numpy as np
+import pandas as pd
+import scipy.signal
+
+import skimage
+
+# A whole bunch of skimage stuff
+import skimage.feature
+import skimage.filters
+import skimage.filters.rank
+import skimage.io
+import skimage.morphology
+import skimage.restoration
+import skimage.segmentation
+import skimage.transform
+# from skimage.feature import register_translation
+
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
+from matplotlib.collections import LineCollection
+from matplotlib.colors import ListedColormap, BoundaryNorm
+
+# This import registers the 3D projection, but is otherwise unused.
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
+import matplotlib.pyplot as plt
+
+import sys
+sys.path.append('../../../')
+import bebi103
+
+import seaborn as sns
+
+
+def legend_without_duplicate_labels(ax):
+    handles, labels = ax.get_legend_handles_labels()
+    unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+    ax.legend(*zip(*unique), bbox_to_anchor=(1.05, 1.0), loc='upper left')
