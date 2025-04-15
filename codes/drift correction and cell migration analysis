@@ -7,6 +7,8 @@ import scipy.signal
 
 import skimage
 
+from pandas import ExcelWriter
+
 # A whole bunch of skimage stuff
 import skimage.feature
 import skimage.filters
@@ -52,24 +54,18 @@ def angle_for_persistence(v1, v2):
     return angle
 
 def angle_for_directionality(v1, v2):
-    """ For calculating cell trajectory directionality between vector of electric field, this definition returns the angle in radians between vectors 'v1' and 'v2'::
-
-            >>> angle_between((1, 0, 0), (0, 1, 0))
-            1.5707963267948966
-            >>> angle_between((1, 0, 0), (1, 0, 0))
-            0.0
-            >>> angle_between((1, 0, 0), (-1, 0, 0))
-            3.141592653589793
-    """
+    """ For calculating cell trajectory directionality between vector of electric field, this definition returns the angle in radians between vectors 'v1' and 'v2'::"""
     v1_u = unit_vector(v1)
     v2_u = unit_vector(v2)
     return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
 all_merged_means = pd.DataFrame()
 all_df_corrected_filtered = pd.DataFrame()
+all_nonmotile_list_df = pd.DataFrame()
 
 final_means_path = input("Enter path to the final means CSV: ")
 filtered_spots_path = input("Enter path to the filtered spots CSV: ")
+final_nonmotile_list_path = input("Enter path to the nonmotile cell list CSV: ")
 
 #### STEP1: Upload the spots data (.csv)
 
@@ -77,7 +73,7 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
     file_prefix = f"aItgb3_0V_{i}"
 
     # Construct the file paths using the prefix
-    csv_file_path = f'data/{file_prefix}.csv'
+    csv_file_path = f'C:/Users/Heonsu/Desktop/20250409 EL-4 CRISPRa/{file_prefix}.csv'
 
     file = csv_file_path
     df = pd.read_csv(file, encoding='latin1', skiprows=[0,2,3])
@@ -344,7 +340,7 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
 
             ax[2].plot(x_shifted, y_shifted)
 
-            # ✨ Annotate 마지막 위치에 cell ID 표시
+            # Add annotation of non motile cell ID
             ax[2].annotate(i, 
                         xy=(x_shifted[-1], y_shifted[-1]), 
                         xytext=(x_shifted[-1] + 5, y_shifted[-1] + 5), 
@@ -459,7 +455,9 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
     # Combine the processed data into the cumulative DataFrames
     all_merged_means = pd.concat([all_merged_means, merged_means], ignore_index=True)
     all_df_corrected_filtered = pd.concat([all_df_corrected_filtered, df_corrected_filtered], ignore_index=True)
+    all_nonmotile_list_df = pd.concat([all_nonmotile_list_df,pd.DataFrame({'cell': df_corrected_nonmotile['cell'].unique()})], ignore_index=True)
 
 # Save the combined data to new CSV files
 all_merged_means.to_csv(final_means_path, index=False)
 all_df_corrected_filtered.to_csv(filtered_spots_path, index=False)
+all_nonmotile_list_df.to_csv(final_nonmotile_list_path, index=False)
