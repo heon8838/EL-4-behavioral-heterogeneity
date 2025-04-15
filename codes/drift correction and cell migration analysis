@@ -420,19 +420,19 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
             df_dict_2 = pd.DataFrame([datalist_2])
             df_speed=pd.concat([df_speed,df_dict_2], ignore_index=True)
 
-        ##### TOTAL DISTANCE TRAVELED #####
+        ##### TOTAL DISTANCE TRAVELED & SPEED from total distance traveled  #####
         if len(d_.frame.unique()) > 0:  # Check whether the cell has at least one frame.
             total_distance = 0
             for t in np.arange(d_.frame.min(), d_.frame.max() + 1, 1)[1:]:
                 vec_t1 = [d_[d_.frame == t].x.values[0] - d_[d_.frame == t-1].x.values[0],
                         d_[d_.frame == t].y.values[0] - d_[d_.frame == t-1].y.values[0],
                         d_[d_.frame == t].z.values[0] - d_[d_.frame == t-1].z.values[0]]
-                total_distance += np.sqrt(vec_t1[0]**2 + vec_t1[1]**2 + vec_t1[2]**2)  # 벡터의 크기를 합산하여 총 이동 거리 계산
+                total_distance += np.sqrt(vec_t1[0]**2 + vec_t1[1]**2 + vec_t1[2]**2)  # Compute total distance traveled by adding every vector length
 
-            # 이동한 총 거리를 초당 속도로 나누어 평균 속도 계산
+            # Calculate the average speed by dividing the total distance traveled by the time taken
             average_speed = total_distance / (len(np.arange(d_.frame.min(), d_.frame.max() + 1, 1)[1:]) * 60)
             
-            # 결과를 데이터프레임에 추가
+            # Add the results to dataframe
             datalist_3 = {
                 'cell': cell[0],
                 'total_distance': total_distance,  # 각 셀이 이동한 총 거리
@@ -441,12 +441,13 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
             df_dict_3 = pd.DataFrame([datalist_3])
             df_distance=pd.concat([df_distance,df_dict_3], ignore_index=True)
 
-        if len(d_.frame.unique())>=0:                                    ############# Directionality ##########
+        ##### DIRECTIONALITY #####
+        if len(d_.frame.unique())>=0:                                 
             for t in np.arange(d_.frame.min(),d_.frame.max(), 6)[1:-1]: 
                 dx_drec = d_[d_.frame== t].x.values[0] - d_[d_.frame== t-6].x.values[0]
                 dy_drec = d_[d_.frame== t].y.values[0] - d_[d_.frame== t-6].y.values[0]
 
-                angle_drec = angle_for_directionality([dx_drec,dy_drec], [1,0])
+                angle_drec = angle_for_directionality([dx_drec,dy_drec], [1,0]) #[1,0] : vector of electric field
                 cos_angle_drec = np.cos(angle_drec)
 
                 datalist_4 = {'cell': cell[0],
@@ -457,12 +458,12 @@ for i in range(1,3):   # ex) range(1,7): replicate from 1 to 6.
                 df_drec = pd.concat([df_drec, df_dict_4], ignore_index = True)
 
 
-    # 'cell'별로 'cos_angle'의 평균 계산
+    # Measure mean of values of each cell
     cos_persistence_means = df_persistence.groupby('cell')['cos_angle'].mean().reset_index()
     speed_means = df_speed.groupby('cell')['speed'].mean().reset_index()
     cos_directionality_means = df_drec.groupby('cell')['cos_drec_drec'].mean().reset_index()
 
-    cos_persistence_means.columns = ['cell', 'cos_persistence_mean']  # 열 이름 변경
+    cos_persistence_means.columns = ['cell', 'cos_persistence_mean']  # Change the name of column
     speed_means.columns=['cell','speed_mean']
     cos_directionality_means.columns = ['cell', 'cos_directionality_mean']
 
