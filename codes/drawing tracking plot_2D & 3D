@@ -1,0 +1,250 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.collections import LineCollection
+from matplotlib.colorbar import ColorbarBase
+
+##### TAKE CARE OF HERE #####
+file_location = input("Enter path of folder having cell spot csv file")
+file_savelocation = input("Enter path of folder saving tracking plot figure")
+exp_filename = input("Enter the name of experimental group csv file, except '.csv' ")
+ctrl_filename = input("Enter the name of control group csv file, except '.csv' ")
+
+xlim_min_xyplot = -100
+xlim_max_xyplot = 100
+
+ylim_min_xyplot = -100
+ylim_max_xyplot = 100
+
+xlim_min_xzplot = -100
+xlim_max_xzplot = 100
+
+ylim_min_xzplot = -50
+ylim_max_xzplot = 50
+
+# Load data
+df = pd.read_csv(f"{file_location}{exp_filename}.csv", encoding='latin1')           # experiment group
+df_control = pd.read_csv(f"{file_location}{ctrl_filename}.csv", encoding='latin1')  # control group
+
+# Initialize an empty DataFrame to store total distances
+df['traveled_distance'] = np.nan 
+df_control['traveled_distance'] = np.nan
+
+# Calculate x_when_min_frame, y_when_min_frame, and z_when_min_frame
+def get_min_frame_value(group, col):
+    min_frame = group['frame'].min()
+    return group.loc[group['frame'] == min_frame, col].iloc[0]
+
+df['x1'] = df.groupby('cell')['x_shifted'].transform(lambda x: x - get_min_frame_value(df[df['cell'] == x.name], 'x_shifted'))
+df['y1'] = df.groupby('cell')['y_shifted'].transform(lambda y: y - get_min_frame_value(df[df['cell'] == y.name], 'y_shifted'))
+df['z1'] = df.groupby('cell')['z_shifted'].transform(lambda z: z - get_min_frame_value(df[df['cell'] == z.name], 'z_shifted'))
+
+df_control['x1'] = df_control.groupby('cell')['x_shifted'].transform(lambda x: x - get_min_frame_value(df_control[df_control['cell'] == x.name], 'x_shifted'))
+df_control['y1'] = df_control.groupby('cell')['y_shifted'].transform(lambda y: y - get_min_frame_value(df_control[df_control['cell'] == y.name], 'y_shifted'))
+df_control['z1'] = df_control.groupby('cell')['z_shifted'].transform(lambda z: z - get_min_frame_value(df_control[df_control['cell'] == z.name], 'z_shifted'))
+
+# Calculate traveled distance for each frame within each cell
+def calculate_traveled_distance(df):
+    for cell, d_ in df.groupby(['cell']):
+        traveled_distance = 0
+        d_ = d_.sort_values(by='frame')  # Arrange according to frame order.
+        for t in range(1, len(d_)):
+            t_idx = d_.index[t]
+            t_prev_idx = d_.index[t-1]
+            if not pd.isna(d_.loc[t_prev_idx, 'x1']) and not pd.isna(d_.loc[t_idx, 'x1']):
+                vec_t1 = [
+                    d_.loc[t_idx, 'x1'] - d_.loc[t_prev_idx, 'x1'],
+                    d_.loc[t_idx, 'y1'] - d_.loc[t_prev_idx, 'y1'],
+                    d_.loc[t_idx, 'z1'] - d_.loc[t_prev_idx, 'z1']
+                ]
+                distance = np.sqrt(vec_t1[0]**2 + vec_t1[1]**2 + vec_t1[2]**2)  # Measure the length/size of vector.
+                traveled_distance += distance
+            df.loc[t_idx, 'traveled_distance'] = traveled_distance
+
+calculate_traveled_distance(df)
+calculate_traveled_distance(df_control)
+
+maximum_traveled_distance = max(df['traveled_distance'].max(), df_control['traveled_distance'].max())
+
+# Filter out rows with NaN traveled_distance
+df = df.dropna(subset=['traveled_distance'])
+df_control = df_control.dropna(subset=['traveled_distance'])
+
+# Check if all 'z_shifted' values are zero
+is_2d = (df['z_shifted'] == 0).all()
+
+# Plotting
+fig = plt.figure(figsize=(10, 10))
+
+# Create the axes for x-y plot (ax2)
+ax2 = fig.add_axes([0.23, 0.23, 0.5, 0.5])  # The location, and size of ax2 plot. The number represents "ratio" [left, bottom, width, height]
+
+# Define a colormap from light red to dark red
+cmap = plt.get_cmap('inferno').reversed()
+
+# Set absolute color range
+vmin = 0
+vmax = maximum_traveled_distance
+
+# x-y plot (ax2)
+for name, group in df.groupby('cell'):
+    points = np.array([group['x1'], group['y1']]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    lc = LineCollection(segments, cmap=cmap, norm=None)
+    lc.set_clim(vmin, vmax)
+    lc.set_array(group['traveled_distance'])
+    lc.set_linewidth(2)
+    ax2.add_collection(lc)
+ax2.set_xlim(xlim_min_xyplot, xlim_max_xyplot)
+ax2.set_ylim(ylim_min_xyplot, ylim_max_xyplot)
+#ax2.set_xticks(np.arange(-150, 151, 50))
+#ax2.set_yticks(np.arange(-150, 151, 50))
+#ax2.set_xlabel("x axis (μm)", fontsize=19, fontname='Arial', labelpad = 10)
+#ax2.set_ylabel("y axis (μm)", fontsize=19, fontname='Arial')
+ax2.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+ax2.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+ax2.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+#ax2.text(0.02, 0.98, "xy plane", transform=ax2.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+ax2.axis('off') # Remove x and y axes
+
+if not is_2d:
+    # Create the axes for x-z plot (ax1) - positioned above ax2
+    ax1 = fig.add_axes([0.23, 0.75, 0.5, 0.25])  # The location, and size of ax1 plot. The number represents "ratio" [left, bottom, width, height]
+    for name, group in df.groupby('cell'):
+        points = np.array([group['x1'], group['z1']]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc = LineCollection(segments, cmap=cmap, norm=None)
+        lc.set_clim(vmin, vmax)
+        lc.set_array(group['traveled_distance'])
+        lc.set_linewidth(2)
+        ax1.add_collection(lc)
+    ax1.set_xlim(xlim_min_xzplot, xlim_max_xzplot)
+    ax1.set_ylim(ylim_min_xzplot, ylim_max_xzplot)
+    #ax1.set_xticks(np.arange(-150, 151, 50))
+    #ax1.set_yticks(np.arange(-50, 51, 50))
+    #ax1.set_xlabel("")
+    #ax1.set_ylabel("z axis (μm)", fontsize=19, fontname='Arial', labelpad = 10)
+    ax1.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+    ax1.xaxis.set_visible(False)  # Hide x-axis labels for the top plot
+    ax1.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    ax1.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax1.text(0.02, 0.98, "zx plane", transform=ax1.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+    ax1.axis('off') # Remove x and y axes
+
+    # Create the axes for z-y plot (ax3) - positioned to the right of ax2
+    #ax3 = fig.add_axes([0.75, 0.23, 0.25, 0.5])   
+    #for name, group in df.groupby('cell'):
+        #points = np.array([group['z1'], group['y1']]).T.reshape(-1, 1, 2)
+        #segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        #lc = LineCollection(segments, cmap=cmap, norm=None)
+        #lc.set_clim(vmin, vmax)
+        #lc.set_array(group['traveled_distance'])
+        #lc.set_linewidth(2)
+        #ax3.add_collection(lc)
+    #ax3.set_xlim(-75, 75)
+    #ax3.set_ylim(-150, 150)
+    #ax3.set_xticks(np.arange(-50, 51, 50))
+    #ax3.set_yticks(np.arange(-150, 151, 50))
+    #ax3.set_xlabel("z axis (μm)", fontsize=19, fontname='Arial')
+    #ax3.set_ylabel("")
+    #ax3.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+    #ax3.yaxis.set_visible(False)  # Hide y-axis labels for the right plot
+    #ax3.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax3.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax3.text(0.03, 0.98, "zy plane", transform=ax3.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+
+# Add colorbar at the specified location
+cax = fig.add_axes([0.75, 0.23, 0.02, 0.5] if not is_2d else [0.75, 0.23, 0.02, 0.5])  # [left, bottom, width, height]
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='vertical' if not is_2d else 'vertical')
+
+# Set ticks for the colorbar with an interval of 50
+ticks = np.arange(vmin, vmax, 50)
+cb.set_ticks(ticks)
+cb.set_ticklabels([f'{int(tick)}' for tick in ticks])
+
+# Add label above the colorbar
+cb.set_label("Total Traveled Distance (µm)", fontsize=20, fontname='Arial', labelpad=20, rotation=270)
+
+plt.savefig(f"{file_savelocation}{exp_filename}.png", dpi=300, bbox_inches='tight') # experimental group
+plt.show()
+
+##### Repeat for the control group
+fig2 = plt.figure(figsize=(10, 10))
+ax5 = fig2.add_axes([0.23, 0.23, 0.5, 0.5]) # The location, and size of ax5 plot. The number represents "ratio" [left, bottom, width, height]
+for name, group in df_control.groupby('cell'):
+    points = np.array([group['x1'], group['y1']]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    lc = LineCollection(segments, cmap=cmap, norm=None)
+    lc.set_clim(vmin, vmax)
+    lc.set_array(group['traveled_distance'])
+    lc.set_linewidth(2)
+    ax5.add_collection(lc)
+ax5.set_xlim(xlim_min_xyplot, xlim_max_xyplot)
+ax5.set_ylim(ylim_min_xyplot, ylim_max_xyplot)
+#ax5.set_xticks(np.arange(-150, 151, 50))
+#ax5.set_yticks(np.arange(-150, 151, 50))
+#ax5.set_xlabel("x axis (μm)", fontsize=19, fontname='Arial', labelpad = 10)
+#ax5.set_ylabel("y axis (μm)", fontsize=19, fontname='Arial')
+ax5.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+ax5.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+ax5.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+#ax5.text(0.02, 0.98, "xy plane", transform=ax5.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+ax5.axis('off') # Remove x and y axes
+
+if not is_2d:
+    # Create the axes for x-z plot (ax4) - positioned above ax5
+    ax4 = fig2.add_axes([0.23, 0.75, 0.5, 0.25]) # The location, and size of ax2 plot. The number represents "ratio" [left, bottom, width, height]
+    for name, group in df_control.groupby('cell'):
+        points = np.array([group['x1'], group['z1']]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc = LineCollection(segments, cmap=cmap, norm=None)
+        lc.set_clim(vmin, vmax)
+        lc.set_array(group['traveled_distance'])
+        lc.set_linewidth(2)
+        ax4.add_collection(lc)
+    ax4.set_xlim(xlim_min_xzplot, xlim_max_xzplot)
+    ax4.set_ylim(ylim_min_xzplot, ylim_max_xzplot)
+    #ax4.set_xticks(np.arange(-150, 151, 50))
+    #ax4.set_yticks(np.arange(-50, 51, 50))
+    #ax4.set_xlabel("")
+    #ax4.set_ylabel("z axis (μm)", fontsize=19, fontname='Arial', labelpad = 10)
+    ax4.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+    ax4.xaxis.set_visible(False)
+    ax4.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    ax4.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax4.text(0.02, 0.98, "zx plane", transform=ax4.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+    ax4.axis('off') # Remove x and y axes
+
+    #ax6 = fig2.add_axes([0.75, 0.23, 0.25, 0.5])
+    #for name, group in df_control.groupby('cell'):
+        #points = np.array([group['z1'], group['y1']]).T.reshape(-1, 1, 2)
+        #segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        #lc = LineCollection(segments, cmap=cmap, norm=None)
+        #lc.set_clim(vmin, vmax)
+        #lc.set_array(group['traveled_distance'])
+        #lc.set_linewidth(2)
+        #ax6.add_collection(lc)
+    #ax6.set_xlim(-75, 75)
+    #ax6.set_ylim(-150, 150)
+    #ax6.set_xticks(np.arange(-50, 51, 50))
+    #ax6.set_yticks(np.arange(-150, 151, 50))
+    #ax6.set_xlabel("z axis (μm)", fontsize=19, fontname='Arial')
+    #ax6.set_ylabel("")
+    #ax6.tick_params(axis='both', which='major', labelsize=12, width=1, length=6)
+    #ax6.yaxis.set_visible(False)
+    #ax6.axhline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax6.axvline(0, color='lightgray', linestyle='--', linewidth=1.5, zorder= 0)
+    #ax6.text(0.03, 0.98, "zy plane", transform=ax6.transAxes, fontsize=13, fontname='Arial', verticalalignment='top')
+
+cax = fig2.add_axes([0.75, 0.23, 0.02, 0.5] if not is_2d else [0.75, 0.23, 0.02, 0.5])
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation='vertical' if not is_2d else 'vertical')
+ticks = np.arange(vmin, vmax, 50)
+cb.set_ticks(ticks)
+cb.set_ticklabels([f'{int(tick)}' for tick in ticks])
+cb.set_label("Total Traveled Distance (µm)", fontsize=20, fontname='Arial', labelpad=20, rotation=270)
+
+plt.savefig(f"{file_savelocation}{ctrl_filename}.png", dpi=300, bbox_inches='tight') # control group
+plt.show()
