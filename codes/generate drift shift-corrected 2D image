@@ -1,0 +1,229 @@
+import numpy as np
+import pandas as pd
+from aicsimageio import AICSImage
+import glob
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
+import skimage
+from skimage.morphology import reconstruction
+from skimage import measure
+from skimage.registration import phase_cross_correlation
+from skimage.measure import regionprops, label
+from skimage.morphology import binary_erosion, disk
+
+import scipy as sp
+from scipy import ndimage as ndi
+from scipy.ndimage import shift
+from scipy import signal
+import scipy.optimize
+
+import cv2
+
+from aicsimageio import AICSImage
+from aicsimageio.writers import OmeTiffWriter
+
+
+def generate_gradient(image):
+    """
+    Generates a gradient magnitude image. The gradient of intensity can be used to figure out the contour of object.
+
+    Parameters:
+        image (np.ndarray): The input 2D image.
+
+    Returns:
+        np.ndarray: gradient magnitude image.
+    """
+    # Convert image to grayscale
+    image = image.astype(np.float32)
+
+    # Compute gradients using Sobel operator
+    grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+
+    return gradient_magnitude
+
+def calculate_drift(input_roi):
+    """
+    Determine x,y shift using ror with 'stationary' object; 
+    - performs cross-correlation analysis of roi from t+1 to t
+
+    """
+    # Normalize the ROI image series
+    input_roi = input_roi.astype(np.float32)
+    input_roi = (input_roi - np.min(input_roi)) / (np.max(input_roi) - np.min(input_roi))
+    
+    
+    # Store the shifts for each frame
+    shifts = []
+    cumulative_shift = np.array([0.0, 0.0])
+    
+    for i in range(1, input_roi.shape[0]):
+        # Calculate shift using phase_cross_correlation
+        shift_estimation, error, diffphase = phase_cross_correlation(generate_gradient(input_roi[i-1]), 
+                                                                     generate_gradient(input_roi[i]), 
+                                                                     upsample_factor=10)
+        cumulative_shift += shift_estimation
+        shifts = np.append(shifts, cumulative_shift)
+            
+    return np.reshape(shifts,[int(len(shifts)/2),2])
+
+
+def image_drift_corr(im, shifts, pad_value=100, pad_mode='constant'):
+    """
+    Applies x,y shifts to original image.
+    
+    im: image array (t dim, channel dim, y dim, x dim)
+    pad_value: number of pixels in x,y to pad image with zeros
+
+    """
+    
+    if len(im.shape) == 4: ## (t, channel, y, x) : 2D live-image have multiple channel
+        # Pad the entire image series
+        padded_shape = (im.shape[0], im.shape[1], im.shape[2] + 2 * pad_value, im.shape[3] + 2 * pad_value)
+        padded_series = np.pad(im, ((0, 0), (0, 0), (pad_value, pad_value), (pad_value, pad_value)), mode=pad_mode)
+
+        # Initialize corrected image series with the same shape as the padded series
+        corrected_series = np.zeros_like(padded_series)
+        corrected_series[0,:,:,:] = padded_series[0, :, :, :]
+
+        # Initialize corrected image series that matched the original size - will crop
+        corrected_series_cropped = np.zeros_like(im)
+        corrected_series_cropped[0,:,:,:] = im[0, :, :, :]
+
+        for i in np.arange(1, im.shape[0]):
+            for channel in np.arange(im.shape[1]):   
+                
+                # Apply the cumulative shift to the current frame
+                corrected_series[i, channel, :, :] = shift(padded_series[i, channel, :, :], shifts[i-1], mode='constant', cval=0)
+
+                # Crop back to original size
+                corrected_series_cropped[i, channel, :, :] = corrected_series[i, channel, pad_value:-pad_value, pad_value:-pad_value]
+    
+    elif len(im.shape) == 3: ## (t, y, x) : 2D live-image have one channel
+        # Pad the entire image series
+        padded_shape = (im.shape[0], im.shape[1] + 2 * pad_value, im.shape[2] + 2 * pad_value)
+        padded_series = np.pad(im, ((0, 0), (pad_value, pad_value), (pad_value, pad_value)), mode=pad_mode)
+
+        # Initialize corrected image series with the same shape as the padded series
+        corrected_series = np.zeros_like(padded_series)
+        corrected_series[0] = padded_series[0]
+
+        # Initialize corrected image series that matched the original size - will crop
+        corrected_series_cropped = np.zeros_like(im)
+
+        for i in np.arange(1, im.shape[0]):
+
+            # Apply the cumulative shift to the current frame
+            corrected_series[i] = shift(padded_series[i], shifts[i-1], mode='constant', cval=0)
+
+            # Crop back to original size
+            corrected_series_cropped[i] = corrected_series[i, pad_value:-pad_value, pad_value:-pad_value]    
+        
+    else:
+        print('dimensions of image appear to be incorrect.')
+    
+    return corrected_series, corrected_series_cropped
+
+#### STEP1: Loading the image data 
+
+# Identify files using glob function
+###### TAKE CARE OF HERE ######
+file_location = input("Enter path of file")
+filename_base = input("Enter the name of TIF image file")
+im_dir = glob.glob(f'{file_location}{filename_base}.tif')    ### Choose your file
+################################
+
+# Select desired image file
+im_dir = im_dir[0]
+
+# Get AICSImage object
+img = AICSImage(im_dir)  
+im = img.get_image_data("TCZYX")
+
+# check dimensions
+im.shape
+print(im.shape)
+
+# Only select the Z = 0 slice. After decision, the image file dimension become (T,C,Y,X)
+im = im[:,:,0,:,:]
+
+
+#### STEP2: Initial look at the "phase contrast channel image" >> "IDENTIFY AN ROI".
+### Watch out the second value of TCYX. Check which value (0 or 1 or 2) is phase channel!#
+## With ImageJ, you can figure out the moving range of non-motile object.
+
+###### TAKE CARE OF HERE ######
+channel_phase = 1
+roi_y_start, roi_y_end = input("Enter the y-axis range of non-motile object. ex. 740 , 780")
+roi_x_start, roi_x_end = input("Enter the x-axis range of non-motile object. ex. 905 , 955")
+################################
+
+im_test = im[:,channel_phase,:,:]
+
+fig, ax = plt.subplots(1,2, figsize = (9,4))
+# Plot the first frame image
+ax[0].imshow(im_test[0])
+# Plot an averaged image across overall frame. We can see how overall particles in image moved.
+ax[1].imshow(np.mean(im_test, axis = 0))
+
+plt.show()
+
+## identify region with feature that isn't moving 
+# (or at least, if things were drift corrected, it wouldn't be moving).
+# This can probably also be done using other channels.
+
+# Select staionary (non-motile) object
+
+fig, ax = plt.subplots(1,2, figsize = (9,4))
+# Plot the first frame image
+ax[0].imshow(im_test[0, roi_y_start:roi_y_end, roi_x_start:roi_x_end])   # Watch out! "TYX"
+# Plot an averaged image. Watch out! "TYX"
+ax[1].imshow(np.mean(im_test[:,roi_y_start:roi_y_end, roi_x_start:roi_x_end], axis = 0)) 
+
+plt.show()
+
+
+#### STEP3: Perform Drift Correction! ####
+
+# Define 2d phase region of interest ROI as determined above
+# Watch out! "TCYX".
+im_roi = im[:, channel_phase, roi_y_start:roi_y_end, roi_x_start:roi_x_end]   ### Put the range of stationary object
+
+# calculate the drift using the phase image ROI - this is what we want to adjust relative to
+shifts = calculate_drift(im_roi)
+
+im_corr, im_corr_cropped = image_drift_corr(im, shifts, pad_value=100, pad_mode='constant')
+
+#### STEP4: Check the first of corrected images
+fig, ax = plt.subplots(1,2, figsize = (9,4))
+# Plot the first frame image of "im_corr"
+ax[0].imshow(im_corr[0,channel_phase,:,:]) #"TCYX"
+# Plot the first frame image of "im_corr_cropped"
+ax[1].imshow(im_corr_cropped[0,channel_phase,:,:]) #"TCYX"
+
+plt.show()
+
+#### STEP5: Below, we expect the drifted object to now be stationary
+# Look at the ROI we selected
+
+fig, ax = plt.subplots(1,2, figsize = (9,4))
+# Plot the first frame of corrected image
+ax[0].imshow(im_corr_cropped[0, channel_phase, roi_y_start:roi_y_end, roi_x_start:roi_x_end])   # "TCYX"
+# Plot an averaged image which was corrected
+ax[1].imshow(np.mean(im_corr_cropped[:, channel_phase, roi_y_start:roi_y_end, roi_x_start:roi_x_end], axis = 0))   # "TCYX"
+
+plt.show()
+
+
+#### STEP6: Save the corrected image to files ####
+
+# padded image
+filename_padd = f'{filename_base}_corr_padded.tif'
+OmeTiffWriter.save(im_corr, file_location + filename_padd, dim_order="TCYX")
+
+# cropped image
+filename_cropped = f'{filename_base}_corr_cropped.tif'
+OmeTiffWriter.save(im_corr_cropped, file_location + filename_cropped, dim_order="TCYX")
+
